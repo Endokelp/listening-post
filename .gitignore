@@ -1,0 +1,6 @@
+node_modules/
+data/
+*.wav
+*.mp3
+*.h5
+*.onnx
