@@ -4,3 +4,5 @@ data/
 *.mp3
 *.h5
 *.onnx
+!models/*.onnx
+!tests/fixtures/*.wav
