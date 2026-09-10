@@ -1,5 +1,5 @@
 import { fft, magnitudeSpectrum } from './fft.js';
-import { BEAT_MIN_HZ, BEAT_MAX_HZ, F0_MIN_HZ } from './config.js';
+import { BEAT_MIN_HZ, BEAT_MAX_HZ, F0_MIN_HZ, BEAT_FLATNESS_REF } from './config.js';
 
 const prevPow2 = (n) => 2 ** Math.floor(Math.log2(n));
 
@@ -27,6 +27,11 @@ function bandpass(samples, loHz, hiHz, sampleRate) {
   return out;
 }
 
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+
+// Four rotors at slightly different RPM beat against each other at a few Hz.
+// A single-engine source has one fundamental and does not beat. This is the
+// feature that separates a multirotor from a lawnmower.
 export function rotorBeatScore(samples, f0, sampleRate) {
   if (!Number.isFinite(f0) || f0 < F0_MIN_HZ) return 0;
 
@@ -48,23 +53,30 @@ export function rotorBeatScore(samples, f0, sampleRate) {
   const hi = Math.min(spec.length - 1, Math.ceil((BEAT_MAX_HZ * n) / sampleRate));
   if (hi <= lo) return 0;
 
-  let peak = 0, peakBin = lo;
+  let peak = 0, sum = 0, logSum = 0, sumSq = 0, bins = 0;
   for (let k = lo; k <= hi; k++) {
-    if (spec[k] > peak) { peak = spec[k]; peakBin = k; }
+    const v = spec[k];
+    if (v > peak) peak = v;
+    sum += v;
+    const p = v * v + 1e-20;
+    logSum += Math.log(p);
+    sumSq += p;
+    bins++;
   }
-  // Floor is the local median within the beat band itself (excluding bins
-  // near the peak), not the median of the whole envelope spectrum. The
-  // envelope's rectification harmonics (at 2*f0, 4*f0, ...) sit far outside
-  // the beat band and make the global median numerically vanish for a
-  // near-periodic single-tone envelope, which inflates any FFT leakage in
-  // the beat band into a false high score. A broadband envelope still fails
-  // to score high here: its in-band bins are flat, so peak barely exceeds
-  // the local median.
-  const rest = [];
-  for (let k = lo; k <= hi; k++) if (Math.abs(k - peakBin) > 2) rest.push(spec[k]);
-  rest.sort((a, b) => a - b);
-  const floor = (rest.length ? rest[rest.length >> 1] : 0) + 1e-9;
+  const bandMean = sum / bins + 1e-12;
+  const flatness = Math.exp(logSum / bins) / (sumSq / bins + 1e-20);
 
-  // One decade of prominence over the floor maps to a full score.
-  return Math.min(1, Math.log10(Math.max(peak / floor, 1)) / 1.5);
+  // Beating shows up as a FEW DISCRETE LINES in the envelope spectrum, so it
+  // needs both a low in-band flatness and a peak standing above the band
+  // mean. Broadband noise satisfies the second on its own - the tallest of
+  // forty random bins always beats their mean - which is why requiring both
+  // is what keeps noise from reading as a drone.
+  const tonality = clamp01(Math.log10(BEAT_FLATNESS_REF / Math.max(flatness, 1e-9)));
+  const prominence = clamp01(Math.log10(Math.max(peak / bandMean, 1)));
+
+  // ponytail: rotor count is not estimated. More rotors spread the beat
+  // energy across more difference frequencies and lower this score - a hex
+  // reads weaker than a quad. Estimate the line count here if hexacopters
+  // ever need equal footing.
+  return tonality * prominence;
 }
