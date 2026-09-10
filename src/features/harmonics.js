@@ -2,12 +2,32 @@ import { magnitudeSpectrum } from './fft.js';
 import { hann } from './window.js';
 import { HARMONIC_FFT_SIZE, F0_MIN_HZ, F0_MAX_HZ, N_HARMONICS } from './config.js';
 
+// Welch-style average over consecutive HARMONIC_FFT_SIZE frames spanning all
+// of `samples` (last frame zero-padded if it doesn't fill). Degenerates to a
+// single windowed FFT of the first HARMONIC_FFT_SIZE samples - identical to
+// a single-frame call - whenever samples.length <= HARMONIC_FFT_SIZE, which
+// is every existing single-frame caller. Averaging matters once samples
+// exceeds one frame: a single short snapshot of closely-spaced tones (e.g. a
+// detuned rotor cluster) can, at some sample offsets, misleadingly interfere
+// below an isolated harmonic's peak; averaging power across offsets removes
+// that phase-dependent artifact.
 export function averagedSpectrum(samples) {
-  const chunk = new Float64Array(HARMONIC_FFT_SIZE);
-  const n = Math.min(samples.length, HARMONIC_FFT_SIZE);
   const w = hann(HARMONIC_FFT_SIZE);
-  for (let i = 0; i < n; i++) chunk[i] = samples[i] * w[i];
-  return magnitudeSpectrum(chunk);
+  const n = samples.length;
+  let sumPower = null;
+  let frames = 0;
+  for (let start = 0; start < Math.max(n, 1); start += HARMONIC_FFT_SIZE) {
+    const chunk = new Float64Array(HARMONIC_FFT_SIZE);
+    const avail = Math.min(HARMONIC_FFT_SIZE, n - start);
+    for (let i = 0; i < avail; i++) chunk[i] = samples[start + i] * w[i];
+    const mag = magnitudeSpectrum(chunk);
+    if (!sumPower) sumPower = new Float64Array(mag.length);
+    for (let i = 0; i < mag.length; i++) sumPower[i] += mag[i] * mag[i];
+    frames++;
+  }
+  const out = new Float64Array(sumPower.length);
+  for (let i = 0; i < out.length; i++) out[i] = Math.sqrt(sumPower[i] / frames);
+  return out;
 }
 
 const binOf = (hz, sampleRate, fftSize) => Math.round((hz * fftSize) / sampleRate);
