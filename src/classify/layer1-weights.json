@@ -1,0 +1,11 @@
+{
+  "trained": false,
+  "note": "Hand-tuned starting values, not fitted to data. train/train_layer1.py overwrites this file and sets trained to true. Do not quote accuracy figures while trained is false.",
+  "coefficients": {
+    "harmonicStack": 3.0,
+    "rotorBeat": 5.0,
+    "bandRatio": 1.5,
+    "spectralFlatness": -2.0
+  },
+  "intercept": -4.0
+}
