@@ -5,9 +5,11 @@ Run: python train/datasets.py
 Self-check only: python train/datasets.py --self-check
 """
 import csv
+import json
 import math
 import subprocess
 import sys
+import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
@@ -24,6 +26,9 @@ TARGET_SR = 48000
 ALEMADI_URL = "https://github.com/saraalemadi/DroneAudioDataset"
 SVANSTROM_URL = "https://github.com/DroneDetectionThesis/Drone-detection-dataset"
 ESC50_URL = "https://github.com/karolpiczak/ESC-50"
+DRONENOISE_API = "https://api.figshare.com/v2/articles/22133411"
+DRONENOISE_MICS = ("M1", "M5", "M9")  # edge, centre, edge of the 9-mic array
+UAV32_URL = "https://github.com/mackenzie-jane/drone-visualization"
 
 ESC50_CONFUSER_CATS = {
     "engine", "chainsaw", "airplane", "helicopter", "hand_saw",
@@ -77,6 +82,9 @@ def _self_check():
         assert False, "expected ValueError for wrong field count"
     except ValueError:
         pass
+    assert _uav32_label("DJI_Mini3_pro_30") == "dji-mini3-pro"
+    assert _uav32_label("Syma_X8SW_87") == "syma-x8sw"
+    assert _uav32_label("NoTrailingNumber") == "notrailingnumber"
     print("self-check passed")
 
 
@@ -227,6 +235,73 @@ def process_esc50():
         write_wav(out_path, audio, sr)
 
 
+# --- dataset 4: DroneNoise (outdoor ground mics -> train) ----------------
+
+def _http_get(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req) as resp:
+        return resp.read()
+
+
+def fetch_dronenoise():
+    dest = RAW / "dronenoise"
+    if dest.exists():
+        return dest
+    dest.mkdir(parents=True)
+    files = json.loads(_http_get(DRONENOISE_API))["files"]
+    mic_suffixes = tuple(f"_{m}.wav" for m in DRONENOISE_MICS)
+    for f in files:
+        name = f["name"]
+        if name.startswith("Calib_"):
+            continue
+        if name.endswith(".xlsx") or name.endswith(mic_suffixes):
+            (dest / name).write_bytes(_http_get(f["download_url"]))
+    return dest
+
+
+def process_dronenoise():
+    """Filenames are <event>_M<n>.wav, one per mic recording the same event.
+    Group them under a shared 'event@mic' recording id (see out_name below;
+    windows.py strips '@mic' when forming cross-validation groups)."""
+    dest = fetch_dronenoise()
+    for f in sorted(dest.glob("*.wav")):
+        event, _, mic = f.stem.rpartition("_")
+        label = f.stem.split("_")[1].lower()
+        out_path = TRAIN_DIR / out_name("drone", "dronenoise", label, f"{event}@{mic}")
+        if out_path.exists():
+            continue
+        audio, sr = sf.read(str(f), dtype="float64")
+        write_wav(out_path, audio, sr)
+
+
+# --- dataset 5: 32-airframe set (cross-airframe -> test) -----------------
+
+def fetch_uav32():
+    dest = RAW / "uav32"
+    if dest.exists():
+        return dest
+    git("clone", "--depth", "1", "--filter=blob:none", "--sparse", UAV32_URL, dest, cwd=ROOT)
+    git("sparse-checkout", "set", "public/droneAudio", cwd=dest)
+    return dest
+
+
+def _uav32_label(stem):
+    """'DJI_Mini3_pro_30' -> 'dji-mini3-pro' (drop trailing _<number>, '_'->'-')."""
+    base, _, tail = stem.rpartition("_")
+    base = base if tail.isdigit() else stem
+    return base.lower().replace("_", "-")
+
+
+def process_uav32():
+    dest = fetch_uav32()
+    for f in sorted((dest / "public" / "droneAudio").glob("*.wav")):
+        out_path = TEST_DIR / out_name("drone", "uav32", _uav32_label(f.stem), f.stem)
+        if out_path.exists():
+            continue
+        audio, sr = sf.read(str(f), dtype="float64")
+        write_wav(out_path, audio, sr)
+
+
 # --- summary ---------------------------------------------------------------
 
 def print_summary():
@@ -257,6 +332,8 @@ def main():
     process_alemadi()
     process_svanstrom()
     process_esc50()
+    process_dronenoise()
+    process_uav32()
     print_summary()
 
 

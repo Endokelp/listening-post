@@ -10,6 +10,7 @@ from collections import defaultdict
 import numpy as np
 from features import extract_features
 from mix import mix_at_snr
+from train_layer1 import TRAIN, design, fit, predict, grouped_cv
 from windows import SAMPLE_RATE, feature_table, read_48k, recordings, windows
 
 SNRS_DB = [20, 10, 5, 0, -5, -10]
@@ -91,6 +92,27 @@ def snr_sweep(weights, threshold):
     return md_table(["Added-noise SNR"] + [f"{s} drones" for s in sources], lines), len(noises)
 
 
+def cross_lab(threshold):
+    """The honest limit. For each drone source in data/train: detection on its
+    recordings when only THOSE recordings are unseen (grouped CV, the rest of
+    the lab is in training) versus when the WHOLE lab is left out of training."""
+    rows = feature_table(TRAIN)
+    X, y = design(rows)
+    src = np.array([r["source"] for r in rows])
+    oof = grouped_cv(X, y, np.array([r["group"] for r in rows]))
+    lines = []
+    for s in sorted(set(src[y == 1])):
+        pos = (src == s) & (y == 1)
+        keep = src != s
+        p = predict(*fit(X[keep], y[keep]), X[pos])
+        lines.append([s, rate(int(np.sum(oof[pos] >= threshold)), int(pos.sum())),
+                      rate(int(np.sum(p >= threshold)), int(pos.sum()))])
+    neg = y == 0
+    lines.append(["non-drone windows flagged", rate(int(np.sum(oof[neg] >= threshold)), int(neg.sum())), ""])
+    return md_table(["Drone source (data/train)", "Its unseen recordings, lab in training",
+                     "Whole lab left out of training"], lines)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--threshold", type=float, default=0.7, help="app enterThreshold")
@@ -160,6 +182,11 @@ def main():
                 "the true SNR is lower than the nominal figure.", "", table, ""]
     else:
         doc += ["No background recordings in data/test.", ""]
+
+    doc += ["## Where it stops working: labs it has never heard", "",
+            "Training-data analysis. A detector that has heard some recordings from a lab "
+            "(its microphone, its site) versus one that has heard nothing from that lab.", "",
+            cross_lab(thr), ""]
 
     OUT.write_text("\n".join(doc))
     print("\n".join(doc))

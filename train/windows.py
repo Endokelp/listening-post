@@ -3,13 +3,15 @@ hop, 48 kHz mono. Scoring whole files would be a train/serve mismatch - the
 app never sees a whole file.
 
 Files are named {kind}__{source}__{label}__{recording}.wav (see datasets.py
-and the in-app recorder), kind being drone, confuser or background."""
+and the in-app recorder), kind being drone, confuser or background. A
+recording of the form '<event>@<mic>' is one of several microphones on the
+same event; the '@mic' suffix is stripped when grouping for CV splits."""
 import math
 import pathlib
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
-from features import extract_features, FEATURE_ORDER
+from features import extract_features, CLASSIFIER_FEATURES
 
 SAMPLE_RATE = 48000
 WINDOW = 2 * SAMPLE_RATE  # WINDOW_SEC in src/features/config.js
@@ -40,19 +42,19 @@ def recordings(directory):
     for path in sorted(pathlib.Path(directory).glob("*.wav")):
         kind, source, label, recording = path.stem.split("__")
         yield {"kind": kind, "source": source, "label": label,
-               "group": f"{source}/{recording}", "path": path}
+               "group": f"{source}/{recording.split('@')[0]}", "path": path}
 
 
 def feature_table(directory):
     """One row per non-silent window: file metadata, start second, f0 and
-    the layer-1 features. Samples are not kept - thousands of 2 s windows
-    would not fit in memory."""
+    every classifier feature. Samples are not kept - thousands of 2 s
+    windows would not fit in memory."""
     rows = []
     for meta in recordings(directory):
         for start, w in windows(read_48k(meta["path"])):
             f = extract_features(w, SAMPLE_RATE)
             rows.append({**meta, "start": start, "f0": f["f0"],
-                         **{k: f[k] for k in FEATURE_ORDER}})
+                         **{k: f[k] for k in CLASSIFIER_FEATURES}})
     return rows
 
 
