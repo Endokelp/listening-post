@@ -5,11 +5,18 @@ import { createDetector } from './detect/state-machine.js';
 import { createSpectrogram } from './ui/spectrogram.js';
 import { createMeters } from './ui/meters.js';
 import { createLog } from './ui/log.js';
+import { createRecorder } from './ui/recorder.js';
 
 const startButton = document.getElementById('start');
 const verdict = document.getElementById('verdict');
 const meters = createMeters(document.getElementById('meters'), FEATURE_ORDER);
 const log = createLog(document.getElementById('log'));
+const recorder = createRecorder({
+  kindSelect: document.getElementById('rec-kind'),
+  labelInput: document.getElementById('rec-label'),
+  button: document.getElementById('rec'),
+  elapsed: document.getElementById('rec-elapsed'),
+});
 
 let session = null;
 let lastFeatures = { f0: 0 };
@@ -38,14 +45,16 @@ startButton.addEventListener('click', async () => {
     session.stop();
     session = null;
     detector.reset();
+    recorder.setListening(false);
     startButton.textContent = 'Start listening';
     verdict.textContent = 'Idle';
     verdict.className = '';
     return;
   }
   try {
-    session = await startCapture(onWindow);
+    session = await startCapture(onWindow, recorder.onFrame);
     createSpectrogram(document.getElementById('spectrogram'), session.analyser);
+    recorder.setListening(true, session.sampleRate);
     startButton.textContent = 'Stop';
   } catch (err) {
     verdict.textContent = `Microphone unavailable: ${err.message}`;

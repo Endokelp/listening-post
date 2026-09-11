@@ -1,7 +1,7 @@
 import { createWindower } from './ring-buffer.js';
 import { WINDOW_SEC, HOP_SEC } from '../features/config.js';
 
-export async function startCapture(onWindow) {
+export async function startCapture(onWindow, onFrame) {
   // All three flags default to true and are all wrong here. AGC destroys the
   // amplitude reference; noise suppression is speech-tuned and attenuates the
   // exact broadband signature being hunted.
@@ -28,7 +28,10 @@ export async function startCapture(onWindow) {
     (samples) => onWindow(samples, sampleRate),
   );
 
-  node.port.onmessage = (e) => windower.push(e.data);
+  node.port.onmessage = (e) => {
+    if (onFrame) onFrame(e.data);
+    windower.push(e.data);
+  };
   source.connect(analyser);
   source.connect(node);
 

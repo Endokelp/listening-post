@@ -29,6 +29,14 @@
   th, td { text-align: left; padding: 0.35rem 0.75rem 0.35rem 0;
            border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; }
   th { color: #7d8590; font-weight: 500; font-size: 0.85rem; }
+  .recorder { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+              margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #21262d; }
+  .recorder select, .recorder input { background: #161b22; color: #e6edf3;
+              border: 1px solid #30363d; border-radius: 6px; padding: 0.4rem 0.5rem; font-size: 0.9rem; }
+  .recorder input { flex: 1 1 9rem; min-width: 0; }
+  .recorder button { padding: 0.4rem 0.9rem; font-size: 0.9rem; }
+  .recorder button:disabled { background: #30363d; color: #7d8590; cursor: not-allowed; }
+  #rec-elapsed { color: #7d8590; font-variant-numeric: tabular-nums; min-width: 2.5rem; }
 </style>
 </head>
 <body>
@@ -38,6 +46,16 @@
   <canvas id="spectrogram" width="512" height="256"></canvas>
   <div id="verdict">Idle</div>
   <div id="meters"></div>
+  <div class="recorder">
+    <select id="rec-kind">
+      <option value="drone">drone</option>
+      <option value="confuser">confuser</option>
+      <option value="background">background</option>
+    </select>
+    <input id="rec-label" placeholder="label, e.g. dji-25m-hover">
+    <button id="rec" disabled>Record</button>
+    <span id="rec-elapsed"></span>
+  </div>
   <table id="log"></table>
 </main>
 <script type="module" src="src/main.js"></script>
