@@ -1,88 +1,181 @@
-"""Phase 3 evidence generator. Reports accuracy vs SNR and false-positive rate
-per confuser class. Every number the video quotes comes from here."""
+"""Phase 3 evidence generator. Scores ONLY data/test - recordings the
+classifier never trained on - with the shipped layer-1 weights, and writes
+docs/BENCHMARK.md. Every number the video or README quotes comes from there."""
 import argparse
-import csv
+import datetime
 import json
 import pathlib
 import sys
+from collections import defaultdict
 import numpy as np
-import soundfile as sf
 from features import extract_features
 from mix import mix_at_snr
+from windows import SAMPLE_RATE, feature_table, read_48k, recordings, windows
 
 SNRS_DB = [20, 10, 5, 0, -5, -10]
+THRESHOLDS = [0.5, 0.7, 0.9]
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+TEST = ROOT / "data" / "test"
 WEIGHTS = ROOT / "src" / "classify" / "layer1-weights.json"
-
-
-def load_clips(directory, sample_rate):
-    clips = []
-    for path in sorted(pathlib.Path(directory).glob("*.wav")):
-        audio, sr = sf.read(path, dtype="float64", always_2d=False)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
-        if sr != sample_rate:
-            print(f"  skipping {path.name}: {sr} Hz, expected {sample_rate}", file=sys.stderr)
-            continue
-        clips.append((path.name, audio))
-    return clips
+OUT = ROOT / "docs" / "BENCHMARK.md"
 
 
 def probability(features, weights):
-    z = weights["intercept"]
-    for name, coefficient in weights["coefficients"].items():
-        z += coefficient * features.get(name, 0.0)
-    return 1 / (1 + np.exp(-z))
+    """Mirrors classify() in src/classify/layer1.js."""
+    z = weights["intercept"] + sum(c * features[k] for k, c in weights["coefficients"].items())
+    return float(1 / (1 + np.exp(-z)))
+
+
+def alerts(probs, threshold, needed=3, window=5):
+    """Would the app's detector have fired at least once? Its idle ->
+    detecting rule (src/detect/state-machine.js): `needed` of the last
+    `window` probabilities at or above the threshold."""
+    return any(sum(p >= threshold for p in probs[max(0, i - window + 1):i + 1]) >= needed
+               for i in range(len(probs)))
+
+
+def group_by(rows, *keys):
+    out = defaultdict(list)
+    for r in rows:
+        out[tuple(r[k] for k in keys)].append(r)
+    return dict(sorted(out.items()))
+
+
+def rate(hits, n):
+    return f"{hits / n:.1%} ({hits}/{n})" if n else "n/a"
+
+
+def md_table(header, lines):
+    return "\n".join(["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+                     + ["| " + " | ".join(str(c) for c in line) + " |" for line in lines])
+
+
+def summary_lines(rows, threshold, keys, with_f0=False):
+    lines = []
+    for key, members in group_by(rows, *keys).items():
+        recs = group_by(members, "group").values()
+        hits = sum(r["p"] >= threshold for r in members)
+        alerting = sum(alerts([r["p"] for r in rec], threshold) for rec in recs)
+        line = [*key, len(recs), rate(hits, len(members)), rate(alerting, len(recs))]
+        if with_f0:
+            line.append(f"{np.median([r['f0'] for r in members]):.0f}")
+        lines.append(line)
+    return lines
+
+
+def snr_sweep(weights, threshold):
+    """Each held-out drone window mixed over a held-out background window at
+    each SNR. The SNR is ADDED noise on top of whatever the recording already
+    contains, so the true SNR is lower than the nominal one."""
+    noises = [next(windows(read_48k(m["path"])), (0, None))[1]
+              for m in recordings(TEST) if m["kind"] == "background"]
+    noises = [n for n in noises if n is not None]
+    if not noises:
+        return None
+    hits = defaultdict(int)
+    count = defaultdict(int)
+    i = 0
+    for m in recordings(TEST):
+        if m["kind"] != "drone":
+            continue
+        for _, w in windows(read_48k(m["path"])):
+            noise = noises[i % len(noises)]
+            i += 1
+            for snr in SNRS_DB:
+                p = probability(extract_features(mix_at_snr(w, noise, snr), SAMPLE_RATE), weights)
+                hits[(m["source"], snr)] += p >= threshold
+                count[(m["source"], snr)] += 1
+    sources = sorted({s for s, _ in count})
+    lines = [[f"{snr:+d} dB"] + [rate(hits[(s, snr)], count[(s, snr)]) for s in sources]
+             for snr in SNRS_DB]
+    return md_table(["Added-noise SNR"] + [f"{s} drones" for s in sources], lines), len(noises)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--drones", default="data/drones")
-    ap.add_argument("--confusers", default="data/confusers")
-    ap.add_argument("--sample-rate", type=int, default=48000)
-    ap.add_argument("--threshold", type=float, default=0.7)
-    ap.add_argument("--out", default="benchmark.csv")
+    ap.add_argument("--threshold", type=float, default=0.7, help="app enterThreshold")
+    ap.add_argument("--self-check", action="store_true")
     args = ap.parse_args()
+    if args.self_check:
+        return _self_check()
 
     weights = json.loads(WEIGHTS.read_text())
-    if not weights.get("trained"):
-        print("WARNING: layer-1 weights are hand-tuned, not trained. "
-              "These numbers are provisional and must not be quoted as results.",
-              file=sys.stderr)
-
-    drones = load_clips(args.drones, args.sample_rate)
-    confusers = load_clips(args.confusers, args.sample_rate)
-    if not drones or not confusers:
-        print(f"No data: {len(drones)} drone clips, {len(confusers)} confuser clips. "
-              f"Populate {args.drones} and {args.confusers} with {args.sample_rate} Hz wavs.")
+    rows = feature_table(TEST)
+    if not rows:
+        print(f"No data in {TEST}. Run train/datasets.py first.")
         return
+    for r in rows:
+        r["p"] = probability(r, weights)
+    thr = args.threshold
+    drones = [r for r in rows if r["kind"] == "drone"]
+    others = [r for r in rows if r["kind"] != "drone"]
 
-    rows = []
-    for snr in SNRS_DB:
-        hits = 0
-        trials = 0
-        for _, drone in drones:
-            for _, confuser in confusers:
-                mixed = mix_at_snr(drone, confuser, snr)
-                p = probability(extract_features(mixed, args.sample_rate), weights)
-                hits += p >= args.threshold
-                trials += 1
-        rows.append({"snr_db": snr, "class": "drone", "n": trials,
-                     "detect_rate": round(hits / trials, 4)})
+    ops = []
+    for t in THRESHOLDS:
+        ops.append([f"{t:.1f}" + (" (app)" if t == thr else ""),
+                    rate(sum(r["p"] >= t for r in drones), len(drones)),
+                    rate(sum(r["p"] >= t for r in others), len(others))])
+    sweep = snr_sweep(weights, thr)
 
-    for name, confuser in confusers:
-        p = probability(extract_features(confuser, args.sample_rate), weights)
-        rows.append({"snr_db": "", "class": f"confuser:{name}", "n": 1,
-                     "detect_rate": round(float(p >= args.threshold), 4)})
+    doc = [
+        "# Benchmark: held-out test data",
+        "",
+        f"Generated by `train/benchmark.py` on {datetime.date.today()}. Do not edit by hand; "
+        "rerun the script.",
+        "",
+        f"**Classifier:** {'trained' if weights.get('trained') else 'UNTRAINED - numbers are provisional'}. "
+        f"{weights.get('note', '')}",
+        "",
+        f"**Test set:** `data/test`, recordings the classifier never trained on: "
+        f"{len(group_by(rows, 'group'))} recordings, {len(rows)} windows. "
+        "Sources and licences: `docs/DATASETS.md`.",
+        "",
+        f"**Method:** each recording is cut into the app's 2-second windows at a 1-second hop and "
+        f"scored with the shipped layer-1 weights. A window counts as a detection at p >= {thr}, "
+        "the app's alert threshold. *Recordings alerting* applies the app's 3-of-5 vote, i.e. "
+        "whether the app would have raised at least one alert on that recording.",
+        "",
+        "## Drones, as recorded",
+        "",
+        md_table(["Source", "Airframe label", "Recordings", "Windows detected",
+                  "Recordings alerting", "Median f0 (Hz)"],
+                 summary_lines(drones, thr, ("source", "label"), with_f0=True)),
+        "",
+        "## False alarms on confusers and background",
+        "",
+        md_table(["Kind", "Source", "Class", "Recordings", "Windows flagged", "Recordings alerting"],
+                 summary_lines(others, thr, ("kind", "source", "label"))),
+        "",
+        "## Operating points",
+        "",
+        md_table(["Threshold", "Drone windows detected", "Non-drone windows flagged"], ops),
+        "",
+        "## Drone detection vs added background noise",
+        "",
+    ]
+    if sweep:
+        table, n_noise = sweep
+        doc += [f"Each held-out drone window mixed over one of {n_noise} held-out background "
+                "windows. The SNR is noise added on top of the recording's own background, so "
+                "the true SNR is lower than the nominal figure.", "", table, ""]
+    else:
+        doc += ["No background recordings in data/test.", ""]
 
-    out = ROOT / args.out
-    with out.open("w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["snr_db", "class", "n", "detect_rate"])
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"wrote {out}")
-    for row in rows:
-        print(row)
+    OUT.write_text("\n".join(doc))
+    print("\n".join(doc))
+    print(f"\nwrote {OUT}")
+    if not weights.get("trained"):
+        print("WARNING: layer-1 weights are untrained. Do not quote these numbers.", file=sys.stderr)
+
+
+def _self_check():
+    assert not alerts([0.9, 0.1, 0.1, 0.1, 0.1], 0.7)        # one spike never fires
+    assert alerts([0.9, 0.1, 0.9, 0.1, 0.9], 0.7)            # 3 of 5
+    assert alerts([0.9, 0.9, 0.9], 0.7)                      # fires before 5 windows exist
+    assert not alerts([0.9, 0.9, 0.1, 0.1, 0.1, 0.1, 0.9], 0.7)  # never 3 inside any 5
+    w = {"intercept": -4.0, "coefficients": {"rotorBeat": 5.0, "harmonicStack": 3.0}}
+    assert abs(probability({"rotorBeat": 1.0, "harmonicStack": 0.5}, w) - 1 / (1 + np.exp(-2.5))) < 1e-12
+    print("benchmark self-check passed")
 
 
 if __name__ == "__main__":

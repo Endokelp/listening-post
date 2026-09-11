@@ -6,3 +6,4 @@ data/
 *.onnx
 !models/*.onnx
 !tests/fixtures/*.wav
+__pycache__/

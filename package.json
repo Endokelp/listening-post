@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "test": "node --test tests/**/*.test.js",
-    "serve": "python -m http.server 8000"
+    "serve": "python -m http.server 8000",
+    "benchmark": "python train/datasets.py && python train/train_layer1.py && python train/benchmark.py"
   }
 }
