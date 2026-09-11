@@ -24,51 +24,75 @@ Hearing a drone in a quiet field is easy. The real problem is **not** raising an
 for a lawnmower, a leaf blower, a motorcycle, an air-conditioning unit or a distant
 airliner. Those are all machines with strong engine tones.
 
-The app separates a drone from them with two measurements that do different jobs:
+### The first idea, and how real audio broke it
 
-| Measurement | What it separates | How |
+A quadcopter's four rotors spin at slightly different speeds, so their tones **beat**
+against each other at 1–30 Hz. A single engine has one tone. The idea was that a drone
+beats and an engine doesn't. On synthetic signals the original version worked perfectly:
+quadcopter 0.89–1.00, single engine 0.006–0.05.
+
+Then it met real recordings, 428 windows of real Parrot drones and real ESC-50 engines:
+
+- On the real drones the rotor-beat score was **0.000**, at the median and at the 90th
+  percentile. Real flight controllers keep changing each rotor's speed, which smears the
+  beat lines.
+- Real engines **do** pulse in that band. Their combustion cycle modulates the loudness;
+  one engine showed lines at 22.7, 45.4 and 68.1 Hz. Chainsaws and helicopters also
+  scored higher than the drones.
+
+The steady synthetic engine hid both facts. Rotor beat is still one of the meters on
+screen, but it no longer decides anything alone.
+
+### What decides now
+
+Every 2-second window (one per second) is described by 53 numbers:
+
+- **Four physical measurements:** harmonic stack, rotor beat, band energy and flatness.
+  These are the meters on screen.
+- **A 24-band spectral fingerprint** (100 Hz to 6.5 kHz). Each 43 ms frame is divided by
+  its own loudness, so the fingerprint is the same for a quiet, distant source and a loud,
+  close one. The app records both the shape and how much it moves over the window: engine
+  firing pulses shuffle energy between bands, and steady rotor tones don't. A test proves
+  the fingerprint doesn't change when the volume does.
+
+A logistic-regression classifier combines them. A 3-of-5 vote with hysteresis and a
+cooldown then decides whether to alert, so one drone-like second cannot fire on its own.
+
+## Evidence (real audio)
+
+All numbers come from `docs/BENCHMARK.md`, produced by `train/benchmark.py` on recordings
+the classifier never trained on. Training used Parrot drones recorded indoors, outdoor
+flyovers of four airframes (DroneNoise, University of Salford) and ESC-50 folds 1–4.
+Sources and licences are in `docs/DATASETS.md`.
+
+**The central finding: it works on microphones it has heard, and not on ones it hasn't.**
+
+| Drone source | Unseen recordings, lab's other recordings in training | Whole lab never heard |
 |---|---|---|
-| **Harmonic stack** | a machine from background noise | Finds the blade-pass tone and checks that its harmonics stand above the local noise floor |
-| **Rotor beat** | a multirotor from a single engine | A quadcopter's four rotors spin at slightly different speeds, so their tones **beat** against each other at 1–30 Hz. A single engine has one tone and does not beat |
+| Parrot (Al-Emadi, indoor phone mic) | **93.9%** of windows | 6.8% |
+| DroneNoise (outdoor ground mics) | **80.2%** | 0.0% |
 
-To score rotor beat, the app bandpasses around the blade-pass tone, takes the loudness
-envelope, then looks for a few discrete lines in the envelope's spectrum. It requires
-both low flatness and a peak that stands above the band.
+The same wall appears on a fresh test that was never used for any design decision: one
+clip each of 32 airframes, recorded on a laptop microphone. The app would alert on **6 of
+32**, all small toy-class drones (Tello, Syma, Hasakee) that sound like the Parrot Mambo it
+trained on. It would alert on **none** of the DJI Mini, Mavic, Phantom or Air drones.
 
-One result runs against intuition: **a single engine scores *higher* on harmonic stack
-than a drone does**, because a drone's slightly detuned rotors smear each harmonic.
-Harmonic stack is not the drone detector. Rotor beat is.
+False alarms on held-out confusers and background: **4.8%** of 2-second windows before the
+vote. Birds dropped from 94% (the first trained model) to 0%. The weak spots are wind
+(37.5% of windows) and a vacuum cleaner (22%).
 
-Every 2-second window (one per second) goes through a small logistic-regression
-classifier over those measurements. A 3-of-5 vote with hysteresis and a cooldown then
-decides whether to raise an alert, so one drone-like second cannot fire on its own. The
-four meters on screen show *why* the app decided what it did.
-
-## Evidence
-
-**Measured on synthetic signals** (the separation between signal types, not accuracy):
-
-| Signal | Harmonic stack | Rotor beat |
-|---|---|---|
-| Quadcopter + noise | 0.27–0.40 | **0.89–1.00** |
-| Hexacopter + noise | 0.38 | 0.30 |
-| Single engine + noise | 0.51–0.66 | **0.006–0.05** |
-| Broadband noise only | 0.04 | 0.38 |
-
-**Real-audio results:** pending. They will come from public drone and confuser
-recordings plus the author's own field recordings, benchmarked with `train/benchmark.py`.
-No accuracy figure is claimed until then. The on-screen classifier currently says
-*untrained*.
+**What this means for the design:** an acoustic detector has to hear the microphone and
+site it guards. A phone is cheap enough to calibrate on site, and a ten-thousand-dollar
+sensor is not. The app therefore says *not yet calibrated to this microphone* until it has
+trained on recordings made through that phone (`docs/FIELD-PROTOCOL.md`). Results on the
+author's own DJI, trained on one day and tested on another, will be added here.
 
 ## Where it stops working (stated on purpose)
 
-1. **An engine with strongly pulsing loudness can look like a drone.** An engine under
-   changing load, or a leaf blower being swept, can pulse in the 1–30 Hz beat band. A test
-   asserts this limitation so it stays visible.
-2. **More rotors score weaker.** A hexacopter spreads its beating across more frequencies:
-   0.30 against a quadcopter's 1.00.
-3. **Broadband noise scores 0.38 on rotor beat.** The classifier rejects it because noise
-   scores 0.04 on harmonic stack.
+1. **A new microphone or site** it has never heard: detection falls below 10% (table above).
+2. **Wind** is the worst natural false alarm: 37.5% of windows.
+3. **Rotor beat alone cannot separate a drone from a real engine.** Engines pulse in the
+   same band.
 4. **One microphone gives no direction or range**, only presence.
 
 ## Built with
@@ -86,6 +110,7 @@ No accuracy figure is claimed until then. The on-screen classifier currently say
 npm test                                   # Node 22+
 npm run serve                              # then open http://localhost:8000
 pip install -r train/requirements.txt      # training and benchmark pipeline
+npm run benchmark                          # fetch public data, train, write docs/BENCHMARK.md
 ```
 
 The microphone needs `localhost` or HTTPS. Browser processing (echo cancellation, noise
@@ -99,8 +124,8 @@ src/features/   FFT, window, mel filterbank, harmonic stack, rotor beat, feature
 src/audio/      microphone capture (AudioWorklet) and windowing
 src/classify/   layer-1 classifier and its weights
 src/detect/     3-of-5 vote, hysteresis, cooldown
-src/ui/         spectrogram, feature meters, detection log
-train/          Python mirror of the features, SNR mixing, training, benchmark
+src/ui/         spectrogram, feature meters, detection log, field recorder
+train/          Python mirror of the features, datasets, windowing, training, benchmark
 tests/          node:test suite, including the JS-Python parity test
-docs/           design spec, build plan, build record
+docs/           BENCHMARK (results), DATASETS, FIELD-PROTOCOL, design spec, build record
 ```
