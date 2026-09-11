@@ -1,9 +1,18 @@
 import { averagedSpectrum, findF0, harmonicStackScore } from './harmonics.js';
 import { rotorBeatScore } from './beat.js';
-import { logMelSpectrogram } from './melbank.js';
-import { HARMONIC_FFT_SIZE, FEATURE_MAX_HZ } from './config.js';
+import { logMelSpectrogram, melShapeStats } from './melbank.js';
+import { HARMONIC_FFT_SIZE, FEATURE_MAX_HZ, MEL_BANDS } from './config.js';
 
 export const FEATURE_ORDER = ['harmonicStack', 'rotorBeat', 'bandRatio', 'spectralFlatness'];
+
+// The 4 meter features plus the gain-invariant mel-shape fingerprint, in the
+// order the classifier consumes them.
+export const CLASSIFIER_FEATURES = [
+  ...FEATURE_ORDER,
+  ...Array.from({ length: MEL_BANDS }, (_, i) => `melMean${i}`),
+  ...Array.from({ length: MEL_BANDS }, (_, i) => `melStd${i}`),
+  'loudnessStd',
+];
 
 const topBin = (spectrum, sampleRate, fftSize) =>
   Math.min(spectrum.length - 1, Math.round((FEATURE_MAX_HZ * fftSize) / sampleRate));
@@ -41,12 +50,18 @@ function spectralFlatness(spectrum, sampleRate, fftSize) {
 export function extractFeatures(samples, sampleRate) {
   const spectrum = averagedSpectrum(samples);
   const f0 = findF0(spectrum, sampleRate, HARMONIC_FFT_SIZE);
-  return {
+  const { melMean, melStd, loudnessStd } = melShapeStats(logMelSpectrogram(samples, sampleRate));
+  const features = {
     f0,
     harmonicStack: harmonicStackScore(spectrum, f0, sampleRate, HARMONIC_FFT_SIZE),
     rotorBeat: rotorBeatScore(samples, f0, sampleRate),
     bandRatio: bandRatio(spectrum, sampleRate, HARMONIC_FFT_SIZE),
     spectralFlatness: spectralFlatness(spectrum, sampleRate, HARMONIC_FFT_SIZE),
-    logMel: logMelSpectrogram(samples, sampleRate),
+    loudnessStd,
   };
+  for (let m = 0; m < MEL_BANDS; m++) {
+    features[`melMean${m}`] = melMean[m];
+    features[`melStd${m}`] = melStd[m];
+  }
+  return features;
 }

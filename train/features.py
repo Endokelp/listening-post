@@ -16,7 +16,8 @@ FEATURE_ORDER = ["harmonicStack", "rotorBeat", "bandRatio", "spectralFlatness"]
 STFT_SIZE = 2048
 STFT_HOP = 512
 HARMONIC_FFT_SIZE = 8192
-N_MELS = 64
+MEL_BANDS = 24
+MEL_FMIN_HZ = 100
 F0_MIN_HZ = 80
 F0_MAX_HZ = 1000
 N_HARMONICS = 6
@@ -24,6 +25,82 @@ FEATURE_MAX_HZ = 6500
 BEAT_MIN_HZ = 1
 BEAT_MAX_HZ = 30
 BEAT_FLATNESS_REF = 0.3
+
+# The 4 meter features plus the gain-invariant mel-shape fingerprint, in the
+# order the classifier consumes them. Mirrors src/features/extract.js.
+CLASSIFIER_FEATURES = (
+    FEATURE_ORDER
+    + [f"melMean{i}" for i in range(MEL_BANDS)]
+    + [f"melStd{i}" for i in range(MEL_BANDS)]
+    + ["loudnessStd"]
+)
+
+
+# HTK mel scale. Slaney's variant is deliberately not used - the JS side
+# must match this exactly. Mirrors src/features/melbank.js.
+def hz_to_mel(hz):
+    return 2595 * np.log10(1 + hz / 700)
+
+
+def mel_to_hz(mel):
+    return 700 * (10 ** (mel / 2595) - 1)
+
+
+def build_mel_bank(sample_rate, fft_size, n_mels, f_min_hz, f_max_hz):
+    """Triangular filters, unnormalised. Mirrors melbank.js buildMelBank:
+    mel points evenly spaced from hz_to_mel(f_min_hz) to hz_to_mel(f_max_hz)."""
+    n_bins = fft_size // 2 + 1
+    mel_min = hz_to_mel(f_min_hz)
+    mel_max = hz_to_mel(f_max_hz)
+    points = np.array([
+        mel_to_hz(mel_min + (mel_max - mel_min) * i / (n_mels + 1)) * fft_size / sample_rate
+        for i in range(n_mels + 2)
+    ])
+    bank = []
+    k = np.arange(n_bins)
+    for m in range(1, n_mels + 1):
+        left, centre, right = points[m - 1], points[m], points[m + 1]
+        filt = np.zeros(n_bins)
+        if centre > left:
+            mask = (k >= left) & (k <= centre)
+            filt[mask] = (k[mask] - left) / (centre - left)
+        if right > centre:
+            mask = (k > centre) & (k <= right)
+            filt[mask] = (right - k[mask]) / (right - centre)
+        bank.append(filt)
+    return bank
+
+
+def log_mel_spectrogram(samples, sample_rate):
+    """Mirrors melbank.js logMelSpectrogram."""
+    bank = build_mel_bank(sample_rate, STFT_SIZE, MEL_BANDS, MEL_FMIN_HZ, FEATURE_MAX_HZ)
+    w = np.hanning(STFT_SIZE)
+    frames = []
+    n = len(samples)
+    start = 0
+    while start + STFT_SIZE <= n:
+        chunk = samples[start:start + STFT_SIZE] * w
+        power = np.abs(np.fft.rfft(chunk)) ** 2
+        frame = np.array([np.log(np.sum(filt * power) + 1e-10) for filt in bank])
+        frames.append(frame)
+        start += STFT_HOP
+    return frames
+
+
+def mel_shape_stats(frames):
+    """Mirrors melbank.js melShapeStats. Subtracting each frame's mean log
+    level makes the fingerprint independent of gain and distance; std over
+    frames captures how the spectrum moves (engine firing pulses vs steady
+    rotor tones)."""
+    if len(frames) == 0:
+        return np.zeros(MEL_BANDS), np.zeros(MEL_BANDS), 0.0
+    frames = np.array(frames)
+    loud = frames.mean(axis=1)
+    shape = frames - loud[:, None]
+    mel_mean = shape.mean(axis=0)
+    mel_std = shape.std(axis=0)  # ddof=0, population std - matches JS
+    loudness_std = float(loud.std())  # ddof=0
+    return mel_mean, mel_std, loudness_std
 
 
 def averaged_spectrum(samples):
@@ -125,7 +202,12 @@ def rotor_beat_score(samples, f0, sample_rate):
     """Mirrors src/features/beat.js rotorBeatScore: score = tonality *
     prominence. tonality is in-band envelope-spectrum flatness measured
     against BEAT_FLATNESS_REF; prominence is peak-over-band-mean (mean of
-    magnitudes in the beat band, not the median of the whole spectrum)."""
+    magnitudes in the beat band, not the median of the whole spectrum).
+
+    The envelope is linearly detrended (closed-form least squares, not
+    scipy.signal.detrend, to keep the arithmetic identical to the JS side)
+    rather than just mean-subtracted, so slow loudness drift doesn't leak
+    into the lowest beat-band bins, then Hann-windowed before the FFT."""
     if not np.isfinite(f0) or f0 < F0_MIN_HZ:
         return 0.0
     band = max(30.0, f0 * 0.25)
@@ -135,9 +217,17 @@ def rotor_beat_score(samples, f0, sample_rate):
     mean = env.mean()
     if mean < 1e-12:
         return 0.0
-    env = env - mean
+
+    t = np.arange(n)
+    t_mean = (n - 1) / 2
+    dt = t - t_mean
+    slope = np.sum(dt * (env - mean)) / np.sum(dt * dt)
+    env = (env - mean - slope * dt) * np.hanning(n)
+
     spec = np.abs(np.fft.rfft(env))
-    lo = max(1, int(np.floor(BEAT_MIN_HZ * n / sample_rate)))
+    # Detrending is not perfect - residual trend leakage still concentrates
+    # in bin 1, so the beat band now starts at bin 2 rather than bin 1.
+    lo = max(2, int(np.ceil(BEAT_MIN_HZ * n / sample_rate)))
     hi = min(len(spec) - 1, int(np.ceil(BEAT_MAX_HZ * n / sample_rate)))
     if hi <= lo:
         return 0.0
@@ -181,10 +271,16 @@ def extract_features(samples, sample_rate):
     samples = np.asarray(samples, dtype=float)
     spectrum = averaged_spectrum(samples)
     f0 = find_f0(spectrum, sample_rate, HARMONIC_FFT_SIZE)
-    return {
+    mel_mean, mel_std, loudness_std = mel_shape_stats(log_mel_spectrogram(samples, sample_rate))
+    features = {
         "f0": float(f0),
         "harmonicStack": harmonic_stack_score(spectrum, f0, sample_rate, HARMONIC_FFT_SIZE),
         "rotorBeat": rotor_beat_score(samples, f0, sample_rate),
         "bandRatio": band_ratio(spectrum, sample_rate, HARMONIC_FFT_SIZE),
         "spectralFlatness": spectral_flatness(spectrum, sample_rate, HARMONIC_FFT_SIZE),
+        "loudnessStd": loudness_std,
     }
+    for m in range(MEL_BANDS):
+        features[f"melMean{m}"] = float(mel_mean[m])
+        features[f"melStd{m}"] = float(mel_std[m])
+    return features

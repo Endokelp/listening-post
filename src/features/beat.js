@@ -1,4 +1,5 @@
 import { fft, magnitudeSpectrum } from './fft.js';
+import { hann } from './window.js';
 import { BEAT_MIN_HZ, BEAT_MAX_HZ, F0_MIN_HZ, BEAT_FLATNESS_REF } from './config.js';
 
 const prevPow2 = (n) => 2 ** Math.floor(Math.log2(n));
@@ -39,17 +40,35 @@ export function rotorBeatScore(samples, f0, sampleRate) {
   const band = Math.max(30, f0 * 0.25);
   const filtered = bandpass(samples, f0 - band, f0 + band, sampleRate);
 
-  // Envelope: rectify, then remove the DC term so the beat peaks dominate.
+  // Envelope: rectify, then remove trend so slow loudness drift (the mic
+  // getting nearer/further, AGC settling) doesn't leak into the lowest
+  // beat-band bins and swamp the beat peaks. A mean subtraction only
+  // removes a flat DC offset - it leaves a linear ramp's energy smeared
+  // across the low end of the spectrum, which is exactly where the beat
+  // band starts looking. A least-squares linear detrend removes that ramp
+  // too.
   const n = prevPow2(filtered.length);
   const env = new Float64Array(n);
   let mean = 0;
   for (let i = 0; i < n; i++) { env[i] = Math.abs(filtered[i]); mean += env[i]; }
   mean /= n;
   if (mean < 1e-12) return 0;
-  for (let i = 0; i < n; i++) env[i] -= mean;
+
+  const tMean = (n - 1) / 2;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    const dt = i - tMean;
+    num += dt * (env[i] - mean);
+    den += dt * dt;
+  }
+  const slope = den > 0 ? num / den : 0;
+  const w = hann(n);
+  for (let i = 0; i < n; i++) env[i] = (env[i] - mean - slope * (i - tMean)) * w[i];
 
   const spec = magnitudeSpectrum(env);
-  const lo = Math.max(1, Math.floor((BEAT_MIN_HZ * n) / sampleRate));
+  // Detrending is not perfect - residual trend leakage still concentrates in
+  // bin 1, so the beat band now starts at bin 2 rather than bin 1.
+  const lo = Math.max(2, Math.ceil((BEAT_MIN_HZ * n) / sampleRate));
   const hi = Math.min(spec.length - 1, Math.ceil((BEAT_MAX_HZ * n) / sampleRate));
   if (hi <= lo) return 0;
 
