@@ -65,4 +65,6 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 
 if (!DEFAULT_WEIGHTS.trained) {
   verdict.textContent = 'Idle — classifier is untrained, scores are provisional';
+} else if (!DEFAULT_WEIGHTS.calibrated) {
+  verdict.textContent = 'Idle — trained on public recordings, not yet calibrated to this microphone';
 }
