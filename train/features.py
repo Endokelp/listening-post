@@ -12,6 +12,7 @@ earlier draft. In particular:
 """
 import numpy as np
 
+FEATURE_ORDER = ["harmonicStack", "rotorBeat", "bandRatio", "spectralFlatness"]
 STFT_SIZE = 2048
 STFT_HOP = 512
 HARMONIC_FFT_SIZE = 8192
@@ -19,6 +20,7 @@ N_MELS = 64
 F0_MIN_HZ = 80
 F0_MAX_HZ = 1000
 N_HARMONICS = 6
+FEATURE_MAX_HZ = 6500
 BEAT_MIN_HZ = 1
 BEAT_MAX_HZ = 30
 BEAT_FLATNESS_REF = 0.3
@@ -152,19 +154,24 @@ def rotor_beat_score(samples, f0, sample_rate):
     return float(tonality * prominence)
 
 
+def _top_bin(spectrum, sample_rate, fft_size):
+    return min(len(spectrum) - 1, _bin_of(FEATURE_MAX_HZ, sample_rate, fft_size))
+
+
 def band_ratio(spectrum, sample_rate, fft_size):
     lo = _bin_of(100, sample_rate, fft_size)
     hi = _bin_of(2000, sample_rate, fft_size)
-    power = spectrum[1:] ** 2
+    top = _top_bin(spectrum, sample_rate, fft_size)
+    power = spectrum[1:top + 1] ** 2
     total = power.sum()
     if total <= 0:
         return 0.0
-    band = (spectrum[max(lo, 1):hi + 1] ** 2).sum()
+    band = (spectrum[max(lo, 1):min(hi, top) + 1] ** 2).sum()
     return float(band / total)
 
 
-def spectral_flatness(spectrum):
-    power = spectrum[1:] ** 2 + 1e-20
+def spectral_flatness(spectrum, sample_rate, fft_size):
+    power = spectrum[1:_top_bin(spectrum, sample_rate, fft_size) + 1] ** 2 + 1e-20
     if power.size == 0 or power.sum() == 0:
         return 0.0
     return float(np.exp(np.log(power).mean()) / power.mean())
@@ -179,5 +186,5 @@ def extract_features(samples, sample_rate):
         "harmonicStack": harmonic_stack_score(spectrum, f0, sample_rate, HARMONIC_FFT_SIZE),
         "rotorBeat": rotor_beat_score(samples, f0, sample_rate),
         "bandRatio": band_ratio(spectrum, sample_rate, HARMONIC_FFT_SIZE),
-        "spectralFlatness": spectral_flatness(spectrum),
+        "spectralFlatness": spectral_flatness(spectrum, sample_rate, HARMONIC_FFT_SIZE),
     }
