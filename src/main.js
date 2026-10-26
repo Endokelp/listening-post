@@ -35,8 +35,8 @@ function onWindow(samples, sampleRate) {
   const state = detector.push(p, Date.now() - startedAt);
 
   verdict.textContent = state === 'detecting'
-    ? `MULTIROTOR — confidence ${p.toFixed(2)}, f0 ${features.f0.toFixed(0)} Hz`
-    : `Listening — ${p.toFixed(2)}`;
+    ? `MULTIROTOR · confidence ${p.toFixed(2)} · f0 ${features.f0.toFixed(0)} Hz`
+    : `Listening · ${p.toFixed(2)}`;
   verdict.className = state;
 }
 
@@ -64,7 +64,7 @@ startButton.addEventListener('click', async () => {
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 
 if (!DEFAULT_WEIGHTS.trained) {
-  verdict.textContent = 'Idle — classifier is untrained, scores are provisional';
+  verdict.textContent = 'Idle: classifier is untrained, scores are provisional';
 } else if (!DEFAULT_WEIGHTS.calibrated) {
-  verdict.textContent = 'Idle — trained on public recordings, not yet calibrated to this microphone';
+  verdict.textContent = 'Idle: trained on public recordings, not yet calibrated to this microphone';
 }
