@@ -84,8 +84,23 @@ vote. Birds dropped from 94% (the first trained model) to 0%. The weak spots are
 **What this means for the design:** an acoustic detector has to hear the microphone and
 site it guards. A phone is cheap enough to calibrate on site, and a ten-thousand-dollar
 sensor is not. The app therefore says *not yet calibrated to this microphone* until it has
-trained on recordings made through that phone (`docs/FIELD-PROTOCOL.md`). Results on the
-author's own DJI, trained on one day and tested on another, will be added here.
+trained on recordings made through that phone (`docs/FIELD-PROTOCOL.md`).
+
+### Field test: my own drone (`docs/FIELD-TEST.md`)
+
+A DJI Mini 2 hovering 4.7 m up, recorded through the app on a phone the model had never
+heard, about 5 m and 10 m out.
+
+- **The model said no on all 10 windows** (every probability below 0.002), consistent with
+  the cross-lab table above.
+- **The rotors were plainly there at 5 m:** two families of tones near 287 and 322 Hz, each
+  with its harmonics, the strongest 23 dB above the surrounding spectrum, all rising together
+  at one point. At 10 m there was no steady rotor line.
+- **Why it said no:** the harmonic-stack meter rated my drone *more* drone-like than the
+  training drones. The learned spectral fingerprint, trained on other labs' drones,
+  microphones and sites, vetoed it.
+
+![Rotor tones at 5 m](docs/img/field-rotor-tones-5m.png)
 
 ## Where it stops working (stated on purpose)
 
@@ -94,6 +109,9 @@ author's own DJI, trained on one day and tested on another, will be added here.
 3. **Rotor beat alone cannot separate a drone from a real engine.** Engines pulse in the
    same band.
 4. **One microphone gives no direction or range**, only presence.
+5. **Short range for small drones.** In a suburban yard, a DJI Mini 2's rotor lines were
+   prominent at about 6 m and not distinguishable at about 10.5 m (two recordings, one
+   afternoon, `docs/FIELD-TEST.md`).
 
 ## Built with
 
@@ -125,7 +143,9 @@ src/audio/      microphone capture (AudioWorklet) and windowing
 src/classify/   layer-1 classifier and its weights
 src/detect/     3-of-5 vote, hysteresis, cooldown
 src/ui/         spectrogram, feature meters, detection log, field recorder
-train/          Python mirror of the features, datasets, windowing, training, benchmark
+train/          Python mirror of the features, datasets, windowing, training, benchmark,
+                field-test figures
 tests/          node:test suite, including the JS-Python parity test
-docs/           BENCHMARK (results), DATASETS, FIELD-PROTOCOL, design spec, build record
+docs/           BENCHMARK (results), FIELD-TEST, DATASETS, FIELD-PROTOCOL, design spec,
+                build record
 ```
