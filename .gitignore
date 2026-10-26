@@ -1,9 +1,9 @@
 node_modules/
+__pycache__/
 data/
+docs/
 *.wav
 *.mp3
 *.h5
 *.onnx
-!models/*.onnx
 !tests/fixtures/*.wav
-__pycache__/

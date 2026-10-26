@@ -20,7 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 TRAIN = ROOT / "data" / "train"
 WEIGHTS = ROOT / "src" / "classify" / "layer1-weights.json"
 # Strong-ish L2: 53 correlated features, a few thousand windows. Chosen in the
-# Phase 3 experiments on grouped CV, not on any test set.
+# experiments on grouped CV, not on any test set.
 REGULARISATION = 0.3
 
 
@@ -72,7 +72,7 @@ def main():
             f"cross-lab numbers, come from train/benchmark.py.")
     WEIGHTS.write_text(json.dumps({
         "trained": True,
-        # Phase 3: a detector that has never heard this microphone and site
+        # A detector that has never heard this microphone and site
         # finds almost nothing (benchmark "Where it stops working"). The app
         # says so until the author's own recordings are in training.
         "calibrated": any(r["source"] == "own" for r in rows),

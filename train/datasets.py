@@ -1,4 +1,4 @@
-"""Phase 3 dataset fetcher. Pulls three public datasets into data/raw/ (gitignored)
+"""Dataset fetcher. Pulls three public datasets into data/raw/ (gitignored)
 and writes normalized 48kHz/mono/16-bit copies into data/train/ and data/test/.
 
 Run: python train/datasets.py

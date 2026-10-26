@@ -1,6 +1,6 @@
-"""Phase 3 evidence generator. Scores ONLY data/test - recordings the
+"""Benchmark. Scores ONLY data/test - recordings the
 classifier never trained on - with the shipped layer-1 weights, and writes
-docs/BENCHMARK.md. Every number the video or README quotes comes from there."""
+docs/BENCHMARK.md. Every number the README quotes comes from there."""
 import argparse
 import datetime
 import json
@@ -150,7 +150,7 @@ def main():
         "",
         f"**Test set:** `data/test`, recordings the classifier never trained on: "
         f"{len(group_by(rows, 'group'))} recordings, {len(rows)} windows. "
-        "Sources and licences: `docs/DATASETS.md`.",
+        "Sources and licences: the Data section of README.md.",
         "",
         f"**Method:** each recording is cut into the app's 2-second windows at a 1-second hop and "
         f"scored with the shipped layer-1 weights. A window counts as a detection at p >= {thr}, "
@@ -188,6 +188,7 @@ def main():
             "(its microphone, its site) versus one that has heard nothing from that lab.", "",
             cross_lab(thr), ""]
 
+    OUT.parent.mkdir(exist_ok=True)
     OUT.write_text("\n".join(doc))
     print("\n".join(doc))
     print(f"\nwrote {OUT}")

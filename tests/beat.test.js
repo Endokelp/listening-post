@@ -39,7 +39,7 @@ function singleEngine(base, noiseAmp = 0, amHz = null) {
 // These tests describe SYNTHETIC signals - clean sine-wave rotor/engine
 // models, not real recordings. The multirotor-vs-single-engine separation
 // below holds for signals like these. It does NOT reliably hold on real
-// audio (Phase 3 finding): a real engine's combustion cycle amplitude-
+// audio: a real engine's combustion cycle amplitude-
 // modulates its own output at 5-30 Hz, landing inside the same beat band a
 // multirotor's difference tones occupy. That's why the classifier
 // (extract.js) no longer relies on rotorBeat alone and also fingerprints

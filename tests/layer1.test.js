@@ -4,7 +4,7 @@ import { classify, DEFAULT_WEIGHTS } from '../src/classify/layer1.js';
 import { CLASSIFIER_FEATURES } from '../src/features/extract.js';
 
 // These tests pin the classifier's mechanics, not the learned weight values -
-// those change every time train/train_layer1.py runs. A Phase 2 test here
+// those change every time train/train_layer1.py runs. An earlier test here
 // asserted "rotor beat must be what separates a drone from a mower"; real
 // audio disproved that (real engines pulse in the beat band) and the trained
 // model gives rotor beat a negative weight. See README "The hard part".

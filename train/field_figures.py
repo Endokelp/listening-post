@@ -1,8 +1,8 @@
-"""Figures and numbers for docs/FIELD-TEST.md: the author's DJI Mini 2 recorded
+"""Field-test figures and numbers for the README: the author's DJI Mini 2 recorded
 in a yard on 2026-10-25 through the app's own recorder (files in data/test,
 named drone__own__dji-mini2-<5m|10m>-hover__*.wav, gitignored).
 
-Run: python train/field_figures.py   -> docs/img/field-*.png (1920x1080)"""
+Run: python train/field_figures.py   -> assets/field-*.png (1920x1080)"""
 import json
 import pathlib
 import random
@@ -16,7 +16,7 @@ from features import extract_features, CLASSIFIER_FEATURES
 from windows import windows, read_48k
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUT = ROOT / "docs" / "img"
+OUT = ROOT / "assets"
 SURF, INK, INK2, MUTED, BLUE, GRAY = "#1a1a19", "#f0efec", "#c3c2b7", "#8a897f", "#3987e5", "#6e6d66"
 CMAP = LinearSegmentedColormap.from_list("blue", [SURF, "#173a66", BLUE, "#dbe9fb"])
 plt.rcParams.update({"font.family": "Segoe UI", "text.color": INK, "axes.labelcolor": INK2,
